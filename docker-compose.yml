@@ -1,0 +1,31 @@
+services:
+  node1:
+    build: .
+    container_name: node1
+    command: ["python", "node.py", "5000", "node2:5000,node3:5000"]
+    ports:
+      - "5001:5000"
+    networks:
+      - blockchain-net
+
+  node2:
+    build: .
+    container_name: node2
+    command: ["python", "node.py", "5000", "node1:5000,node3:5000"]
+    ports:
+      - "5002:5000"
+    networks:
+      - blockchain-net
+
+  node3:
+    build: .
+    container_name: node3
+    command: ["python", "node.py", "5000", "node1:5000,node2:5000"]
+    ports:
+      - "5003:5000"
+    networks:
+      - blockchain-net
+
+networks:
+  blockchain-net:
+    driver: bridge
