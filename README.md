@@ -1,4 +1,4 @@
-# Praktikum 1B — Blockchain Voting (Versi Gabungan)
+# Blockchain - Voting Presma
 
 Program simulasi **sistem voting berbasis Blockchain** menggunakan Python. Sistem terdiri dari beberapa node yang saling terhubung melalui HTTP untuk menyimpan data voting.
 
