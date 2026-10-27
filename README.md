@@ -1,397 +1,355 @@
-# Blockchain - Voting Presma
+# Prototipe Blockchain Sederhana dengan Python — E-Voting Presma UNTAD
 
-Program simulasi **sistem voting berbasis Blockchain** menggunakan Python. Sistem terdiri dari beberapa node yang saling terhubung melalui HTTP untuk menyimpan data voting.
+Proyek **Kelompok 4, Teknik Informatika Universitas Tadulako (2026)** ini merupakan prototipe sistem pemungutan suara elektronik (*e-voting*) untuk simulasi **Pemilihan Presiden Mahasiswa (Presma)**. Sistem dibangun menggunakan Python dan blockchain terdistribusi dengan transaksi bertanda tangan digital, *Proof of Work* (PoW), serta sinkronisasi antarnode.
 
-Versi ini menggabungkan dua sumber:
+> **Status:** prototipe untuk pembelajaran dan pengujian. Sistem **belum siap digunakan untuk pemilihan resmi** dan belum menjamin kerahasiaan pilihan suara atau kepemilikan NIM yang terverifikasi melalui sistem akademik.
 
-* **Jaringan multi-node** dari praktikum sebelumnya: broadcast antar-node, validasi block, dan **Longest-Chain Rule**.
-* **Kriptografi dan struktur block** dari `blockchain_voting.py`: suara **bertanda tangan digital (RSA-PSS)**, **transaction pool**, **Proof of Work**, dan validasi seluruh rantai.
+## 1. Tujuan dan ruang lingkup
 
-Program **tidak menjalankan demo otomatis**. Node berjalan sebagai server, lalu semua aksi (membuat identitas, voting, menambang, validasi, dan seterusnya) dilakukan dengan mengetik perintah `client.py` di terminal.
+Sesuai laporan proyek, sistem bertujuan mendemonstrasikan:
 
-## 📁 Struktur Direktori
+- pencatatan suara secara terstruktur ke dalam blok yang saling terhubung;
+- pemeriksaan tanda tangan digital dan validitas transaksi;
+- pencegahan *double voting* berdasarkan NIM dalam riwayat/pool yang diketahui node;
+- proses penambangan blok menggunakan PoW;
+- penyebaran transaksi dan blok antarnode, serta pemulihan ketertinggalan rantai dengan *longest-chain rule*;
+- deteksi perubahan data dan penolakan blok tidak valid.
+
+**Aktor:** pemilih (mahasiswa UNTAD yang memenuhi aturan NIM/angkatan pada prototipe), kandidat (`Paslon 1` atau `Paslon 2` dalam skenario uji), dan node jaringan yang menyimpan serta memvalidasi blockchain. Aturan contoh dalam laporan mengacu pada angkatan 2023–2025/semester 3–7; pemeriksaan format/angkatan **bukan** autentikasi identitas mahasiswa terhadap database resmi.
+
+## 2. Teknologi dan konsep
+
+| Komponen | Implementasi |
+| --- | --- |
+| Bahasa | Python 3.8+ |
+| Kriptografi identitas | Pasangan kunci RSA-2048, disimpan di client |
+| Tanda tangan transaksi | RSA-PSS dengan SHA-256 |
+| Hash blok | SHA-256 atas representasi JSON terurut |
+| Konsensus demonstrasi | Proof of Work, difficulty default `4` (hash diawali `0000`) |
+| Komunikasi jaringan | HTTP antarnode dengan endpoint JSON |
+| Sinkronisasi | Pemeriksaan rantai valid terpanjang (*longest-chain rule*) |
+| Deployment opsional | Docker dan Docker Compose |
+
+Setiap blok menyimpan `index`, `timestamp`, `transaksi`, `previous_hash`, `nonce`, dan `hash`. Blok genesis menggunakan `timestamp = 0` agar identik pada semua node. Perubahan isi blok tanpa menghitung ulang dan memenuhi kembali aturan validasi menyebabkan rantai dinyatakan tidak valid.
+
+## 3. Struktur repository
 
 ```text
-praktikum1b/
-├── node.py                 # Node blockchain: Transaksi, Block, Blockchain, Node, HTTP
-├── client.py               # CLI: Dompet (kunci voter) + semua perintah
-├── Dockerfile              # Konfigurasi Docker image
-├── docker-compose.yml      # Konfigurasi jaringan multi-node
-└── README.md               # Dokumentasi penggunaan
+Blockchain---Voting-Presma/
+├── node.py              # Transaksi, Block, Blockchain, Node, HTTP, validasi
+├── client.py            # CLI pemilih, dompet lokal, dan perintah pengujian
+├── Dockerfile           # Image Python untuk node
+├── docker-compose.yml  # Tiga node dalam satu jaringan Docker
+└── README.md            # Dokumentasi proyek
 ```
 
-`client.py` mengimpor class dari `node.py`, jadi **keduanya harus berada di folder yang sama**.
+`client.py` menggunakan kelas dari `node.py`; jalankan perintah di direktori yang berisi kedua berkas tersebut.
 
-## 🧩 Susunan Program
-
-| Class | File | Fungsi |
+| Komponen | Berkas | Fungsi |
 | --- | --- | --- |
-| `Transaksi` | `node.py` | Satu suara: NIM, pilihan, public key, timestamp, signature |
-| `Block` | `node.py` | index, timestamp, daftar transaksi, previous hash, nonce, hash, dan proses penambangan |
-| `Blockchain` | `node.py` | Rantai block, transaction pool, validasi, dan Proof of Work |
-| `Node` | `node.py` | Blockchain + daftar peer, broadcast, dan resolve |
-| `Dompet` | `client.py` | Membuat dan menyimpan kunci voter, serta menandatangani suara |
+| `Transaksi` | `node.py` | Data suara, tanda tangan, verifikasi, serialisasi JSON |
+| `Block` | `node.py` | Struktur blok, penghitungan hash, penambangan nonce |
+| `Blockchain` | `node.py` | Rantai, *transaction pool*, penambangan, validasi, rekapitulasi |
+| `Node` | `node.py` | Daftar *peer*, broadcast transaksi/blok, sinkronisasi |
+| `NodeHandler` | `node.py` | Server HTTP dan endpoint |
+| `Dompet` | `client.py` | Membuat/memuat kunci pemilih dan menandatangani suara |
 
----
+## 4. Alur kerja sistem
 
-# ⚙️ 0. Persiapan
-
-Python 3.8 atau lebih baru, dan library `cryptography`:
-
-```powershell
-pip install cryptography
+```text
+Pemilih membuat identitas RSA-2048
+             |
+             v
+Client membuat dan menandatangani transaksi suara
+             |
+             v
+POST /transaksi ke node
+             |
+             v
+Validasi NIM + kandidat + signature + double voting
+             |
+     +-------+-------+
+     |               |
+   Ditolak         Diterima
+                     |
+                     v
+                Transaction pool
+                     |
+           POST /mine (Proof of Work)
+                     |
+                     v
+             Blok masuk blockchain
+                     |
+                     v
+         Broadcast blok ke node peer
+                     |
+                     v
+       Validasi peer / GET /resolve
 ```
 
----
+Transaksi suara memuat NIM (`voter_id`), kandidat, waktu, *public key*, dan *signature*. **Perintah `vote` tidak langsung memasukkan suara ke blok**: transaksi masuk ke *pool* lebih dahulu, lalu dicatat ke blockchain ketika `mine` dijalankan.
 
-# 🚀 1. Menjalankan Node di Terminal Lokal
+### Validasi blok
 
-Buka **3 jendela terminal** di dalam folder `praktikum1b/`.
+Pemeriksaan yang dijelaskan dalam laporan meliputi: urutan `index`, kecocokan `previous_hash`, hash hasil perhitungan ulang, target PoW, blok tidak kosong, validitas seluruh transaksi, dan tidak adanya NIM yang memilih dua kali. Jika rantai rusak, sistem melaporkan indeks blok pertama yang tidak valid beserta alasannya.
 
-Format perintah:
+## 5. Instalasi dan persiapan
+
+Pastikan Python 3.8 atau lebih baru telah tersedia.
+
+```bash
+git clone https://github.com/DrBham/Blockchain---Voting-Presma.git
+cd Blockchain---Voting-Presma
+python -m pip install cryptography
+```
+
+Untuk memeriksa bantuan perintah, jalankan:
+
+```bash
+python client.py
+```
+
+> File `dompet_<NIM>.pem` berisi **private key tanpa enkripsi** dan dibuat di komputer client. Jangan unggah, *commit*, atau bagikan berkas dompet. Untuk penggunaan di luar demonstrasi diperlukan proteksi kunci dan autentikasi identitas yang lebih kuat.
+
+## 6. Menjalankan jaringan tiga node
+
+Buka tiga terminal terpisah di folder repository.
+
+**Terminal 1 — Node 1 (port 5001)**
+
+```bash
+python node.py 5001 localhost:5002,localhost:5003
+```
+
+**Terminal 2 — Node 2 (port 5002)**
+
+```bash
+python node.py 5002 localhost:5001,localhost:5003
+```
+
+**Terminal 3 — Node 3 (port 5003)**
+
+```bash
+python node.py 5003 localhost:5001,localhost:5002
+```
+
+Format:
 
 ```text
 python node.py <port> [peer1,peer2,...] [difficulty]
 ```
 
-`difficulty` adalah jumlah angka nol di awal hash hasil Proof of Work (default `4`). Angka lebih besar membuat penambangan lebih lama.
+Default `difficulty` adalah `4`. Log transaksi, penambangan, validasi, broadcast, dan sinkronisasi ditampilkan pada terminal node.
 
-### Terminal 1 — Node 1
+### Alternatif menggunakan Docker Compose
 
-```powershell
-python node.py 5001 localhost:5002,localhost:5003
+```bash
+docker compose up --build
 ```
 
-### Terminal 2 — Node 2
+Berkas `docker-compose.yml` menyediakan tiga node: `localhost:5001`, `localhost:5002`, dan `localhost:5003` dari komputer host. Di dalam container, masing-masing server berjalan pada port `5000`.
 
-```powershell
-python node.py 5002 localhost:5001,localhost:5003
-```
+## 7. Penggunaan client CLI
 
-### Terminal 3 — Node 3
-
-```powershell
-python node.py 5003 localhost:5001,localhost:5002
-```
-
-Setelah ketiganya berjalan, terbentuk jaringan **3 node** yang saling terhubung. Semua log kejadian penting (transaksi masuk, pool, penambangan, block diterima atau ditolak) tercetak di terminal node masing-masing.
-
-> Opsional: peer juga bisa ditambahkan setelah node berjalan, misalnya `python client.py add_peer localhost:5001 localhost:5002`. Perintah ini menghubungkan **dua arah** dan hanya cocok untuk node di satu komputer (alamat balik yang dipakai adalah `127.0.0.1`). Untuk Docker atau dua laptop, daftarkan peer saat node dijalankan.
-
----
-
-# 🖥️ 2. Menggunakan Client CLI
-
-Buka **terminal baru** di folder `praktikum1b/`. Format umum:
+Format umum:
 
 ```text
 python client.py <perintah> <alamat-node> [argumen...]
 ```
 
-## Alur Kerja Voting
+Contoh berikut menggunakan NIM **data simulasi** dan jaringan lokal. Jalankan dari terminal baru.
 
-Berbeda dengan versi sebelumnya, **voting tidak langsung membuat block**. Alurnya:
+**1. Membuat identitas pemilih**
 
-```text
-vote  ->  transaksi bertanda tangan masuk POOL (dan disebarkan ke semua node)
-mine  ->  block dibentuk dari isi pool + Proof of Work -> block disebarkan
+```bash
+python client.py identitas F55124055
 ```
 
-Jadi setelah `vote`, jalankan `mine` agar suara tercatat di blockchain. Beberapa suara bisa dikumpulkan dulu di pool, lalu ditambang sekaligus dalam satu block.
+Program membuat/memuat pasangan kunci RSA dan menyimpan *private key* pada `dompet_F55124055.pem` di sisi client.
 
-## A. Membuat Identitas Voter
+**2. Mengirimkan transaksi voting**
 
-```powershell
-python client.py identitas F55125001
+```bash
+python client.py vote localhost:5001 "Paslon 1" F55124055
+python client.py vote localhost:5001 "Paslon 2" F55124056
 ```
 
-Mencetak alamat dan public key (dipotong). Private key disimpan **lokal** di `dompet_F55125001.pem` dan tidak pernah dikirim ke node. Perintah `vote` otomatis membuat identitas jika belum ada.
+Node memvalidasi transaksi dan menyimpannya dalam *pool* jika sah. Gunakan NIM berbeda untuk setiap suara.
 
-## B. Memasukkan Suara Sah
+**3. Melihat transaksi yang menunggu ditambang**
 
-```powershell
-python client.py vote localhost:5001 "Paslon 1" "F55125001"
-python client.py vote localhost:5001 "Paslon 2" "C10123045"
+```bash
+python client.py pool localhost:5001
 ```
 
-NIM harus memenuhi ketentuan sistem: mahasiswa **Angkatan 2023–2025 / Semester 3–7**.
+**4. Menambang blok**
 
-## C. Melihat Pool (Suara Pending)
-
-```powershell
-python client.py pool localhost:5002
-```
-
-Suara yang masuk di Node 1 juga muncul di pool Node 2 dan Node 3.
-
-## D. Menambang Block
-
-```powershell
+```bash
 python client.py mine localhost:5001
 ```
 
-Pembentukan block candidate, Proof of Work (jumlah percobaan, nonce, hash, lama waktu), dan block diterima rantai tercetak di terminal node.
+Node membentuk kandidat blok dari *pool*, mencari `nonce` sesuai kesulitan PoW, menambahkan blok ke rantai, mengosongkan transaksi yang telah dicatat dari *pool*, dan mengirim blok ke *peer*.
 
-## E. Melihat Isi Blockchain
+**5. Melihat rantai blockchain**
 
-```powershell
+```bash
+python client.py chain localhost:5001
+```
+
+**6. Memvalidasi rantai**
+
+```bash
+python client.py validate localhost:5001
+```
+
+**7. Melihat hasil rekapitulasi suara**
+
+```bash
+python client.py tally localhost:5001
+```
+
+**8. Sinkronisasi node**
+
+```bash
+python client.py resolve localhost:5002
 python client.py chain localhost:5002
 ```
 
-## F. Rekapitulasi Suara
+Node memeriksa rantai milik *peer* dan memilih rantai valid yang lebih panjang jika tersedia.
 
-```powershell
-python client.py tally localhost:5002
+## 8. Pengujian sesuai checkpoint laporan
+
+Pengujian dilakukan **secara manual** dengan menjalankan `client.py`; program tidak menjalankan semua skenario secara otomatis. Beberapa uji perlu dilakukan dalam kondisi rantai baru dan/atau menggunakan NIM yang belum tercatat.
+
+| Checkpoint | Pengujian | Bukti yang diamati |
+| --- | --- | --- |
+| 1 | Pembuatan identitas | Public key dan lokasi dompet lokal |
+| 2 | Pembuatan dan penandatanganan transaksi | Ringkasan suara dan signature |
+| 3 | Verifikasi signature | Transaksi sah diterima; transaksi yang diubah ditolak |
+| 4 | Status pool | Jumlah dan daftar suara pending |
+| 5 | Pembentukan kandidat blok | Index, previous hash, dan transaksi dalam blok |
+| 6 | Proof of Work | Percobaan nonce, hasil hash, lama penambangan |
+| 7 | Penerimaan blok | Panjang rantai bertambah dan pool berkurang |
+| 8 | Validasi kondisi normal | Seluruh rantai dinyatakan valid |
+| 9 | Manipulasi blok lama | Indeks blok rusak dan ketidakcocokan hash |
+| 10 | Broadcast dan sinkronisasi | Penerimaan data antarnode dan hasil resolve |
+| 11 | Penolakan blok tidak sah | HTTP 409 untuk blok dengan PoW tidak valid |
+
+### 8.1 Menguji signature yang dimanipulasi
+
+```bash
+python client.py vote_ubah localhost:5001 "Paslon 1" "Paslon 2" F55124057
 ```
 
-## G. Validasi Seluruh Rantai
+Transaksi ditandatangani untuk satu kandidat, lalu pilihan diubah sebelum dikirim. Node diharapkan menolak karena signature tidak cocok.
 
-```powershell
-python client.py validate localhost:5002
+### 8.2 Menguji double voting
+
+Setelah NIM `F55124055` berhasil memilih, ulangi voting dengan NIM yang sama:
+
+```bash
+python client.py vote localhost:5001 "Paslon 2" F55124055
 ```
 
-Memeriksa hash, previous hash, Proof of Work, signature, dan double voting di seluruh block. Jika ada yang rusak, ditampilkan **index block pertama yang rusak** beserta alasannya.
+Node diharapkan menolak karena NIM tersebut sudah tercatat sebagai pemilih.
 
-## H. Longest-Chain Rule
+### 8.3 Menguji manipulasi blok lama
 
-```powershell
-python client.py resolve localhost:5003
+**Khusus lingkungan demo.** Pastikan blok indeks `1` sudah ada. Jangan menjalankan uji ini pada node yang ingin dipertahankan sebagai data valid.
+
+```bash
+python client.py tamper localhost:5001 1
+python client.py validate localhost:5001
 ```
 
-Node mengambil rantai peer, memvalidasinya, lalu memakai rantai valid yang paling panjang.
+Perubahan transaksi di dalam blok tanpa memperbarui hash akan terdeteksi sebagai rantai tidak valid.
 
----
+### 8.4 Menguji blok palsu
 
-# 🧪 3. Skenario Pengujian
-
-## 3.1 Uji Penolakan Mahasiswa yang Belum Memenuhi Syarat
-
-```powershell
-python client.py vote localhost:5001 "Paslon 1" "F55126001"
-```
-
-**DITOLAK**: Angkatan 2026 tidak memenuhi syarat.
-
-## 3.2 Uji Penolakan Double Voting
-
-Gunakan NIM yang sudah memilih (baik yang masih di pool maupun yang sudah di blockchain):
-
-```powershell
-python client.py vote localhost:5001 "Paslon 2" "F55125001"
-```
-
-**DITOLAK**: NIM sudah menggunakan hak pilihnya.
-
-## 3.3 Uji Transaksi yang Diubah Setelah Ditandatangani
-
-```powershell
-python client.py vote_ubah localhost:5001 "Paslon 1" "Paslon 2" "F55123003"
-```
-
-Suara ditandatangani untuk Paslon 1, lalu isinya diubah menjadi Paslon 2 sebelum dikirim. **DITOLAK**: signature tidak cocok.
-
-## 3.4 Uji Manipulasi Data Block Lama
-
-```powershell
-python client.py tamper localhost:5002 1
-python client.py validate localhost:5002
-```
-
-`tamper` (khusus demo) mengubah pilihan di Block 1 pada Node 2 tanpa menghitung ulang hash. `validate` mendeteksi manipulasi dan menyebutkan block pertama yang rusak. Node lain tetap valid karena hanya Node 2 yang diubah.
-
-## 3.5 Uji Block Palsu (Tanpa Proof of Work)
-
-```powershell
+```bash
 python client.py palsu localhost:5001
 ```
 
-Client mengirim block dengan transaksi sah tetapi tanpa Proof of Work yang valid. **DITOLAK** dengan status HTTP 409 beserta alasannya.
+Node diharapkan menolak blok yang tidak memenuhi persyaratan PoW, dengan status HTTP `409`.
 
-## 3.6 Uji Node yang Sempat Mati
+### 8.5 Menguji sinkronisasi
 
-1. Matikan Node 3 (`Ctrl + C` di terminalnya).
-2. Di Node 1, jalankan `vote` lalu `mine`.
-3. Jalankan kembali Node 3 dengan perintah semula.
-4. Jalankan `python client.py resolve localhost:5003`.
-5. Cek dengan `python client.py chain localhost:5003`: rantainya kini sama dengan node lain.
+Jalankan beberapa node, tambang blok pada node yang aktif, lalu pada node lain jalankan:
 
----
-
-# 📋 4. Urutan Demo 11 Checkpoint
-
-Setiap bagian kode di `node.py` dan `client.py` ditandai komentar `[CHECKPOINT n]`.
-
-| No | Peristiwa | Perintah | Dilihat di |
-| --- | --- | --- | --- |
-| 1 | Pembuatan identitas pengirim | `identitas <NIM>` | Terminal client |
-| 2 | Transaksi dibuat dan ditandatangani | `vote ...` | Terminal client dan node |
-| 3 | Verifikasi signature (dan penolakan) | `vote ...` dan `vote_ubah ...` | Terminal node dan client |
-| 4 | Status pool | `vote ...` berulang, atau `pool ...` | Terminal node |
-| 5 | Block candidate dari pool | `mine ...` | Terminal node |
-| 6 | Proof of Work berjalan | `mine ...` | Terminal node |
-| 7 | Block diterima rantai | `mine ...` | Terminal node |
-| 8 | Validasi rantai normal | `validate ...` | Terminal client |
-| 9 | Manipulasi data block lama | `tamper ...` lalu `validate ...` | Terminal client dan node |
-| 10 | Broadcast dan sinkronisasi | `mine ...` pada Node 1, lalu skenario 3.6 | Terminal node asal dan tujuan |
-| 11 | Penolakan block tidak sah | `palsu ...` | Terminal node dan client |
-
----
-
-# 🐳 5. Menjalankan Menggunakan Docker
-
-Pastikan **Docker Desktop** sudah aktif.
-
-```powershell
-docker compose up --build -d     # build dan jalankan semua node
-docker compose ps                # cek status container
-docker compose logs -f           # lihat log node (checkpoint tercetak di sini)
-docker compose down              # hentikan dan hapus container
+```bash
+python client.py resolve localhost:5002
+python client.py chain localhost:5002
 ```
 
-Client tetap dijalankan dari terminal lokal, misalnya:
+Node mengambil rantai valid terpanjang yang tersedia dari *peer*. Pastikan alamat peer dapat diakses.
 
-```powershell
-python client.py vote localhost:5001 "Paslon 1" "A11124012"
-python client.py mine localhost:5001
-python client.py tally localhost:5002
+## 9. Daftar endpoint HTTP
+
+| Metode | Endpoint | Fungsi |
+| --- | --- | --- |
+| GET | `/chain` | Melihat blockchain |
+| GET | `/pool` | Melihat transaksi yang belum ditambang |
+| GET | `/tally` | Rekapitulasi suara |
+| GET | `/peers` | Melihat node peer |
+| GET | `/validate` | Memvalidasi rantai blockchain |
+| GET | `/resolve` | Sinkronisasi mengikuti rantai valid terpanjang |
+| POST | `/transaksi` | Mengirim transaksi voting bertanda tangan |
+| POST | `/mine` | Menambang transaksi dari pool |
+| POST | `/block` | Menerima blok dari node lain |
+| POST | `/peers` | Menambah peer |
+| POST | `/tamper` | Simulasi manipulasi data, **khusus demo** |
+
+## 10. Uji lintas mesin (dua laptop)
+
+Laporan proyek juga mendokumentasikan percobaan jaringan dengan dua laptop, meliputi pengiriman suara, penambangan, rekapitulasi, tampilan rantai, penolakan *double voting*, dan proses *resolve*.
+
+Contoh alamat pada laporan menggunakan `192.168.137.1:5001` dan `192.168.137.253:5002`. **Alamat tersebut hanya contoh dari lingkungan pengujian laporan**; ganti sesuai alamat IP yang benar pada jaringan lokal yang sedang dipakai.
+
+Pada laptop pertama:
+
+```bash
+python node.py 5001 192.168.137.253:5002
 ```
 
-### Penyesuaian yang diperlukan untuk versi gabungan
+Pada laptop kedua:
 
-* `Dockerfile` harus memasang library `cryptography` dan menyalin `node.py`, misalnya:
-
-  ```dockerfile
-  RUN pip install --no-cache-dir cryptography
-  ```
-
-* Daftar peer pada `docker-compose.yml` memakai nama service (misalnya `node2:5002`), bukan `localhost`.
-* Perintah `add_peer` tidak cocok untuk Docker, jadi daftarkan peer lewat argumen saat node dijalankan.
-
----
-
-# 🌐 6. Pengujian Blockchain Voting Menggunakan 2 Laptop
-
-Menguji sistem secara **terdistribusi** menggunakan 2 laptop yang terhubung melalui hotspot.
-
-* **Laptop A (Teman)**: Node 1 dan pembagi hotspot.
-* **Laptop B (Kamu)**: terhubung ke hotspot, Node 2.
-
-### Topologi Jaringan
-
-```text
-┌──────────────────────────────┐
-│       Laptop A (Teman)       │
-│  Hotspot, IP: 192.168.137.1  │
-│  Node 1, Port: 5001          │
-└──────────────┬───────────────┘
-               │ Hotspot / Wi-Fi
-┌──────────────▼───────────────┐
-│        Laptop B (Kamu)       │
-│  IP: 192.168.137.161         │
-│  Node 2, Port: 5002          │
-└──────────────────────────────┘
-```
-
-| Perangkat | Peran | IP Address | Port |
-| --- | --- | --- | --- |
-| Laptop A (Teman) | Node 1 / Hotspot | `192.168.137.1` | `5001` |
-| Laptop B (Kamu) | Node 2 / Client | `192.168.137.161` | `5002` |
-
-Cek alamat IP dengan `ipconfig` di masing-masing laptop. Jika berubah setelah hotspot dibuat ulang, gunakan alamat terbaru.
-
-## 6.1 Windows Firewall
-
-Izinkan koneksi masuk TCP pada port `5001` (Laptop A) dan `5002` (Laptop B):
-
-* **Opsi A**: nonaktifkan Windows Defender Firewall sementara pada jaringan **Private**, lalu aktifkan kembali setelah pengujian.
-* **Opsi B (lebih aman)**: buat **Inbound Rule** untuk port `5001` dan `5002`.
-
-## 6.2 Menjalankan Node
-
-Laptop A:
-
-```powershell
-python node.py 5001 192.168.137.161:5002
-```
-
-Laptop B:
-
-```powershell
+```bash
 python node.py 5002 192.168.137.1:5001
 ```
 
-Kedua node mendaftarkan peer **saat dijalankan** (jangan gunakan `add_peer`, karena alamat baliknya `127.0.0.1`).
+Dari komputer yang dapat mengakses server, misalnya:
 
-## 6.3 Skenario
-
-**Skenario 1: Laptop B mengirim suara, Laptop A menambang.**
-
-```powershell
-python client.py vote 192.168.137.1:5001 "Paslon 1" "F55125001"
+```bash
+python client.py vote 192.168.137.1:5001 "Paslon 1" F55125001
 python client.py mine 192.168.137.1:5001
+python client.py tally 192.168.137.253:5002
+python client.py resolve 192.168.137.253:5002
 ```
 
-Suara masuk pool Node 1 dan disebarkan ke Node 2. Setelah `mine`, block baru ditambang dan disebarkan ke Laptop B.
+Kedua laptop harus berada di jaringan yang saling terhubung; periksa IP masing-masing laptop, firewall, dan port yang digunakan. Kesalahan koneksi antarnode dapat menghambat broadcast dan sinkronisasi.
 
-**Skenario 2: Laptop A mengirim suara ke Laptop B.**
+## 11. Keterbatasan dan pengembangan
 
-```powershell
-python client.py vote 192.168.137.161:5002 "Paslon 2" "C10123045"
-python client.py mine 192.168.137.161:5002
-```
+Sesuai bagian keterbatasan laporan, prototipe masih memerlukan pengujian lebih lanjut terhadap manipulasi data, perbedaan rantai antarnode, dan gangguan jaringan. Selain itu:
 
-**Skenario 3: rekapitulasi dan isi rantai** (dari laptop mana pun):
+- validasi NIM belum membuktikan kepemilikan identitas mahasiswa melalui layanan akademik resmi;
+- isi suara pada blockchain tidak dirancang sebagai sistem pemilihan rahasia end-to-end;
+- private key tersimpan secara lokal tanpa enkripsi berkas;
+- kesesuaian rantai berdasarkan *longest-chain rule* pada prototipe tidak dengan sendirinya menjamin keamanan jaringan produksi;
+- layanan HTTP dan antarmuka uji (`/tamper`) tidak sesuai untuk dibuka ke jaringan publik tanpa pengamanan tambahan.
 
-```powershell
-python client.py tally 192.168.137.1:5001
-python client.py chain 192.168.137.161:5002
-```
+Rencana pengembangan pada Sub-CPMK 6 mencakup pengujian multi-node lanjutan, validasi penerimaan blok, pemulihan node ketika rantai berbeda, dan pengujian transaksi tidak sah serta *double voting*.
 
-**Skenario 4: double voting antar-laptop.**
+## 12. Kontribusi kelompok
 
-```powershell
-python client.py vote 192.168.137.1:5001 "Paslon 2" "F55125001"
-```
+| Nama | NIM | Peran dalam laporan |
+| --- | --- | --- |
+| Dimas Reginald Bhamakerti | F55124055 | Perancangan sistem blockchain dan struktur blok |
+| Dimas Setiawan | F55124082 | Pengembangan transaksi dan tanda tangan digital |
+| I Made Aditya Pramana | F55124087 | Pengujian blockchain dan penyusunan laporan |
+| Moh Magribi Ramadhan | F55124104 | Pengujian PoW dan validasi rantai |
+| Moh Fiqhi | F55124108 | Dokumentasi proyek dan hasil pengujian |
 
-Harus **DITOLAK**, meskipun NIM tersebut dikirim dari laptop berbeda.
-
-**Skenario 5: Longest-Chain Rule.** Jika rantai kedua node berbeda:
-
-```powershell
-python client.py resolve 192.168.137.1:5001
-```
-
-> Catatan: file kunci `dompet_<NIM>.pem` tersimpan di laptop tempat `client.py` dijalankan.
-
----
-
-# 📌 Ringkasan Perintah
-
-| Perintah | Fungsi |
-| --- | --- |
-| `python node.py <port> [peers] [difficulty]` | Menjalankan node |
-| `python client.py identitas <NIM>` | Membuat/melihat identitas voter |
-| `python client.py vote <node> <Paslon> <NIM>` | Membuat, menandatangani, dan mengirim suara ke pool |
-| `python client.py vote_ubah <node> <Paslon> <PaslonDiubah> <NIM>` | Uji suara yang diubah setelah ditandatangani |
-| `python client.py pool <node>` | Melihat suara pending |
-| `python client.py mine <node>` | Membentuk block dari pool + Proof of Work |
-| `python client.py chain <node>` | Melihat blockchain |
-| `python client.py validate <node>` | Validasi seluruh rantai |
-| `python client.py tally <node>` | Rekapitulasi suara |
-| `python client.py tamper <node> <index>` | Demo: ubah data block lama |
-| `python client.py add_peer <node> <peer>` | Menghubungkan dua node (satu komputer) |
-| `python client.py resolve <node>` | Longest-Chain Rule |
-| `python client.py palsu <node>` | Uji block tanpa Proof of Work |
-| `docker compose up --build -d` / `ps` / `down` | Menjalankan, mengecek, dan menghentikan jaringan Docker |
-
----
-
-# 📝 Catatan
-
-* Jalankan seluruh node sebelum menggunakan `client.py`.
-* Setiap node harus menggunakan **port yang berbeda**, dan port tidak boleh dipakai aplikasi lain.
-* `vote` hanya memasukkan suara ke pool. Jalankan `mine` agar suara masuk blockchain.
-* Hapus file `dompet_*.pem` jika ingin membuat identitas baru. **Jangan membagikan file ini**, karena berisi private key.
-* `tamper` hanya untuk demo checkpoint 9, bukan fitur sistem sesungguhnya.
-* Node belum memeriksa bahwa NIM benar-benar milik pemilik kunci (hanya memeriksa format NIM dan tanda tangan). Ini keterbatasan yang sebaiknya dicatat di laporan.
-* Setelah selesai pengujian dua laptop, aktifkan kembali Windows Defender Firewall jika sebelumnya dinonaktifkan.
+**Dosen pengampu:** Rizka Ardiansyah, S.Kom., M.Kom.  
+**Program studi:** S1 Teknik Informatika, Fakultas Teknik, Universitas Tadulako.  
+**Tahun:** 2026.
