@@ -47,9 +47,10 @@ from cryptography.hazmat.primitives.asymmetric import padding
 PORT = 0  # diisi saat node dijalankan, dipakai untuk awalan log
 
 # --- Aturan & Konfigurasi Voting UNTAD ---
-PASLON_VALID = ["Paslon 1", "Paslon 2"]
-ANGKATAN_VALID = ["23", "24", "25"]  # Angkatan 2023 (Sem 7), 2024 (Sem 5), 2025 (Sem 3)
-FAKULTAS_UNTAD = ["A", "B", "C", "D", "E", "F", "G", "K", "L", "N", "P"]
+PASLON_VALID = ("Paslon 1", "Paslon 2")
+ANGKATAN_VALID = {"23", "24", "25"}  # Angkatan 2023 (Sem 7), 2024 (Sem 5), 2025 (Sem 3)
+FAKULTAS_UNTAD = {"A", "B", "C", "D", "E", "F", "G", "K", "L", "N", "P"}
+BATAS_WAKTU_JARINGAN = 5
 
 
 def log(pesan):
@@ -86,6 +87,11 @@ def _padding_pss():
     return padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH)
 
 
+def _ke_json_bytes(data):
+    """Serialisasi JSON yang konsisten untuk hashing, signing, dan jaringan."""
+    return json.dumps(data, sort_keys=True).encode("utf-8")
+
+
 # ============================================================
 # 1. CLASS TRANSAKSI  (satu suara)
 # [FITUR WAJIB: Transaksi bertanda tangan] ditandatangani private key pengirim,
@@ -102,11 +108,11 @@ class Transaksi:
 
     def pesan(self):
         """Isi yang ditandatangani. Kalau salah satu isinya diubah, signature jadi tidak cocok."""
-        return json.dumps({
+        return _ke_json_bytes({
             "voter_id": self.voter_id,
             "kandidat": self.kandidat,
             "timestamp": self.timestamp,
-        }, sort_keys=True).encode()
+        })
 
     # [CHECKPOINT 2] Transaksi ditandatangani dengan private key pengirim (dipanggil dari client.py)
     def tanda_tangani(self, private_key):
@@ -176,7 +182,7 @@ class Block:
             "previous_hash": self.previous_hash,
             "nonce": self.nonce,
         }
-        return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+        return hashlib.sha256(_ke_json_bytes(data)).hexdigest()
 
     # [FITUR WAJIB: Proof of Work] nonce dicari terhadap difficulty, disimpan sebagai atribut block
     # [CHECKPOINT 6] Mengembalikan jumlah percobaan dan lama waktu untuk dicetak di tambang_pool()
@@ -186,11 +192,10 @@ class Block:
         target = "0" * difficulty
         mulai = time.time()
         self.nonce = 0
-        while True:
-            self.hash = self.hitung_hash()
-            if self.hash.startswith(target):
-                break
+        self.hash = self.hitung_hash()
+        while not self.hash.startswith(target):
             self.nonce += 1
+            self.hash = self.hitung_hash()
         return self.nonce + 1, time.time() - mulai
 
     def to_dict(self):
@@ -227,9 +232,9 @@ def validasi_block(block, induk, difficulty, voters_sebelumnya):
         return False, "previous hash tidak cocok dengan hash block sebelumnya"
     if block.hash != block.hitung_hash():
         return False, "hash tidak cocok dengan isi block (data berubah)"
-    target = "0" * difficulty
-    if not block.hash.startswith(target):
-        return False, f"proof of work tidak valid (hash tidak diawali {target})"
+    target_hash = "0" * difficulty
+    if not block.hash.startswith(target_hash):
+        return False, f"proof of work tidak valid (hash tidak diawali {target_hash})"
     if not block.transaksi:
         return False, "block tidak berisi transaksi"
 
@@ -258,8 +263,7 @@ def validasi_rantai(chain, difficulty):
         ok, alasan = validasi_block(chain[i], chain[i - 1], difficulty, voters)
         if not ok:
             return False, i, alasan
-        for tx in chain[i].transaksi:
-            voters.add(tx.voter_id)
+        voters.update(tx.voter_id for tx in chain[i].transaksi)
     return True, None, "rantai valid"
 
 
@@ -286,9 +290,9 @@ class Blockchain:
         return {tx.voter_id for b in self.chain for tx in b.transaksi}
 
     def sudah_memilih(self, voter_id):
-        if voter_id in self.voters_di_rantai():
-            return True
-        return any(tx.voter_id == voter_id for tx in self.pool)
+        return voter_id in self.voters_di_rantai() or any(
+            tx.voter_id == voter_id for tx in self.pool
+        )
 
     # --- Transaksi & pool ---
 
@@ -350,7 +354,7 @@ class Blockchain:
 
             # [CHECKPOINT 7] Block diterima rantai: index baru, rantai bertambah panjang, pool dikosongkan
             self.chain.append(block)
-            self.pool = []
+            self.pool.clear()
             log("=== BLOCK DITERIMA RANTAI ===")
             log(f"Index block baru : {block.index}")
             log(f"Panjang rantai   : {len(self.chain)} block")
@@ -389,14 +393,12 @@ class Blockchain:
 
     def rekap(self):
         hasil = {p: 0 for p in PASLON_VALID}
-        total = 0
         with self.lock:
-            for b in self.chain:
-                for tx in b.transaksi:
-                    if tx.kandidat in hasil:
-                        hasil[tx.kandidat] += 1
-                    total += 1
-        return total, hasil
+            transaksi = [tx for block in self.chain for tx in block.transaksi]
+            for tx in transaksi:
+                if tx.kandidat in hasil:
+                    hasil[tx.kandidat] += 1
+        return len(transaksi), hasil
 
     # [CHECKPOINT 9] Memanipulasi data block lama (khusus demo), hash sengaja TIDAK dihitung ulang
     def ubah_data_demo(self, index):
@@ -416,16 +418,18 @@ class Blockchain:
 # ============================================================
 
 def kirim_json(url, isi):
-    data = json.dumps(isi).encode("utf-8")
     permintaan = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+        url,
+        data=_ke_json_bytes(isi),
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
-    with urllib.request.urlopen(permintaan, timeout=5) as balasan:
+    with urllib.request.urlopen(permintaan, timeout=BATAS_WAKTU_JARINGAN) as balasan:
         return json.loads(balasan.read().decode("utf-8"))
 
 
 def ambil_json(url):
-    with urllib.request.urlopen(url, timeout=5) as balasan:
+    with urllib.request.urlopen(url, timeout=BATAS_WAKTU_JARINGAN) as balasan:
         return json.loads(balasan.read().decode("utf-8"))
 
 
@@ -439,21 +443,20 @@ class Node:
     def broadcast_transaksi(self, tx):
         isi = tx.to_dict()
         isi["diteruskan"] = True  # penanda agar penerima tidak menyebarkan ulang (hindari putaran tak berujung)
-        for peer in self.peers:
-            try:
-                kirim_json(f"http://{peer}/transaksi", isi)
-                log(f" -> transaksi {tx.voter_id} dikirim ke {peer}")
-            except Exception as e:
-                log(f" !! gagal mengirim transaksi ke {peer} ({e})")
+        self._broadcast("transaksi", isi, f"transaksi {tx.voter_id}")
 
     # [CHECKPOINT 10] Broadcast block antar-node: log PENGIRIMAN di node asal
     def broadcast_block(self, block):
+        self._broadcast("block", block.to_dict(), f"block {block.index}")
+
+    def _broadcast(self, endpoint, isi, label):
+        """Kirim data ke semua peer; kegagalan satu peer tidak menghentikan peer lain."""
         for peer in self.peers:
             try:
-                kirim_json(f"http://{peer}/block", block.to_dict())
-                log(f" -> block {block.index} dikirim ke {peer} (diterima)")
+                kirim_json(f"http://{peer}/{endpoint}", isi)
+                log(f" -> {label} dikirim ke {peer} (diterima)")
             except Exception as e:
-                log(f" !! block {block.index} ke {peer} tidak diterima ({e})")
+                log(f" !! {label} ke {peer} tidak diterima ({e})")
 
     def tambah_peer(self, peer, timbal_balik=True):
         if not peer or peer in self.peers:
@@ -519,6 +522,10 @@ class NodeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(badan)
 
+    def _baca_json(self):
+        panjang = int(self.headers.get("Content-Length", 0))
+        return json.loads(self.rfile.read(panjang) or b"{}")
+
     def do_GET(self):
         bc = NODE.blockchain
         if self.path == "/chain":
@@ -548,10 +555,9 @@ class NodeHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         bc = NODE.blockchain
-        panjang = int(self.headers.get("Content-Length", 0))
         try:
-            isi = json.loads(self.rfile.read(panjang) or b"{}")
-        except ValueError:
+            isi = self._baca_json()
+        except (ValueError, TypeError):
             self._balas(400, {"error": "isi permintaan bukan JSON"})
             return
 

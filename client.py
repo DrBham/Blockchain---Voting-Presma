@@ -12,15 +12,17 @@
 #  CP10 perintah add_peer / resolve   CP11 perintah palsu
 
 import json
-import os
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from node import Block, Transaksi, alamat_dari_pem
+
+BATAS_WAKTU_NODE = 120
 
 
 # ============================================================
@@ -30,22 +32,24 @@ from node import Block, Transaksi, alamat_dari_pem
 class Dompet:
     def __init__(self, nim):
         self.nim = nim.upper().strip()
-        self.berkas = f"dompet_{self.nim}.pem"
+        self.berkas = Path(f"dompet_{self.nim}.pem")
 
-        if os.path.exists(self.berkas):
-            with open(self.berkas, "rb") as f:
-                self.private_key = serialization.load_pem_private_key(f.read(), password=None)
+        if self.berkas.exists():
+            self.private_key = serialization.load_pem_private_key(
+                self.berkas.read_bytes(), password=None
+            )
             self.baru = False
         else:
             self.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-            with open(self.berkas, "wb") as f:
-                f.write(self.private_key.private_bytes(
+            self.berkas.write_bytes(
+                self.private_key.private_bytes(
                     encoding=serialization.Encoding.PEM,
                     format=serialization.PrivateFormat.PKCS8,
                     encryption_algorithm=serialization.NoEncryption(),
-                ))
+                )
+            )
             try:
-                os.chmod(self.berkas, 0o600)
+                self.berkas.chmod(0o600)
             except OSError:
                 pass
             self.baru = True
@@ -91,7 +95,7 @@ def panggil(url, data=None):
             method="POST",
         )
     try:
-        with urllib.request.urlopen(permintaan, timeout=120) as balasan:
+        with urllib.request.urlopen(permintaan, timeout=BATAS_WAKTU_NODE) as balasan:
             return balasan.status, json.loads(balasan.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         try:
@@ -109,10 +113,14 @@ def ringkas(chain):
             print(f"      - {t['voter_id']} -> {t['kandidat']} | sig {t['signature'][:16]}...")
 
 
+def panggil_node(alamat, endpoint, data=None):
+    return panggil(f"http://{alamat}/{endpoint}", data)
+
+
 # [CHECKPOINT 3] Hasil verifikasi dari node: diterima ke pool, atau ditolak beserta alasannya
 # [CHECKPOINT 4] Jumlah transaksi pending di pool ikut tercetak
 def kirim_transaksi(alamat, tx):
-    kode, hasil = panggil(f"http://{alamat}/transaksi", tx.to_dict())
+    kode, hasil = panggil_node(alamat, "transaksi", tx.to_dict())
     if kode in (200, 201):
         print(f"Transaksi DITERIMA node: {hasil['pesan']} (pending di pool: {hasil['pool']})")
     else:
@@ -138,119 +146,142 @@ BANTUAN = """Perintah:
   palsu <node>                                  kirim block tanpa PoW valid (harus ditolak)"""
 
 
-def main():
-    if len(sys.argv) < 3:
-        print(BANTUAN)
-        return
+def perintah_identitas(arg):
+    Dompet(arg[0]).tampilkan_identitas()
 
-    perintah = sys.argv[1]
-    arg = sys.argv[2:]
 
-    if perintah == "identitas":
-        Dompet(arg[0]).tampilkan_identitas()
-        return
-
+def perintah_vote(arg):
     alamat = arg[0]
+    kandidat = arg[1] if len(arg) > 1 else "Paslon 1"
+    nim = arg[2] if len(arg) > 2 else "F55125001"
+    dompet = Dompet(nim)
+    dompet.tampilkan_identitas()
+    tx = dompet.buat_transaksi(kandidat)
+    print(f"Transaksi dibuat dan ditandatangani: {tx.voter_id} -> {tx.kandidat}")
+    print(f"  Signature: {tx.signature[:32]}...")
+    kirim_transaksi(alamat, tx)
 
-    if perintah == "vote":
-        kandidat = arg[1] if len(arg) > 1 else "Paslon 1"
-        nim = arg[2] if len(arg) > 2 else "F55125001"
-        dompet = Dompet(nim)
-        dompet.tampilkan_identitas()
-        tx = dompet.buat_transaksi(kandidat)
-        print(f"Transaksi dibuat dan ditandatangani: {tx.voter_id} -> {tx.kandidat}")
-        print(f"  Signature: {tx.signature[:32]}...")
-        kirim_transaksi(alamat, tx)
 
-    # [CHECKPOINT 3] Transaksi diubah SETELAH ditandatangani -> harus ditolak node
-    elif perintah == "vote_ubah":
-        asli, diubah, nim = arg[1], arg[2], arg[3]
-        dompet = Dompet(nim)
-        tx = dompet.buat_transaksi(asli)
-        print(f"Transaksi ditandatangani untuk '{asli}', lalu isinya diubah menjadi '{diubah}'")
-        tx.kandidat = diubah
-        kirim_transaksi(alamat, tx)
+# [CHECKPOINT 3] Transaksi diubah SETELAH ditandatangani -> harus ditolak node
+def perintah_vote_ubah(arg):
+    alamat, asli, diubah, nim = arg[:4]
+    tx = Dompet(nim).buat_transaksi(asli)
+    print(f"Transaksi ditandatangani untuk '{asli}', lalu isinya diubah menjadi '{diubah}'")
+    tx.kandidat = diubah
+    kirim_transaksi(alamat, tx)
 
-    # [CHECKPOINT 4] Status pool
-    elif perintah == "pool":
-        _, hasil = panggil(f"http://{alamat}/pool")
-        print(f"Transaksi pending di {alamat}: {hasil['jumlah']}")
-        for t in hasil["transaksi"]:
-            print(f"  - {t['voter_id']} -> {t['kandidat']} | sig {t['signature'][:16]}...")
 
-    # [CHECKPOINT 5, 6, 7] Membentuk block dari pool, proof of work, block diterima rantai
-    # (rincian lengkapnya tercetak di console node)
-    elif perintah == "mine":
-        kode, hasil = panggil(f"http://{alamat}/mine", {})
-        if kode == 201:
-            b = hasil["block"]
-            print(f"{hasil['pesan']}: Block {b['index']} (nonce {b['nonce']}, hash {b['hash'][:20]}...)")
-        else:
-            print(f"Gagal menambang: {hasil.get('error')}")
+# [CHECKPOINT 4] Status pool
+def perintah_pool(arg):
+    alamat = arg[0]
+    _, hasil = panggil_node(alamat, "pool")
+    print(f"Transaksi pending di {alamat}: {hasil['jumlah']}")
+    for tx in hasil["transaksi"]:
+        print(f"  - {tx['voter_id']} -> {tx['kandidat']} | sig {tx['signature'][:16]}...")
 
-    elif perintah == "chain":
-        _, hasil = panggil(f"http://{alamat}/chain")
-        print(f"Panjang rantai di {alamat}: {hasil['panjang']} block")
-        ringkas(hasil["chain"])
 
-    # [CHECKPOINT 8] Rantai normal -> valid. [CHECKPOINT 9] Setelah tamper -> index block rusak + alasan
-    elif perintah == "validate":
-        _, hasil = panggil(f"http://{alamat}/validate")
-        if hasil["valid"]:
-            print(f"Rantai VALID untuk seluruh {hasil['panjang']} block")
-        else:
-            print(f"Rantai TIDAK VALID. Block pertama yang rusak: index {hasil['index_rusak']}")
-            print(f"Alasan: {hasil['alasan']}")
+# [CHECKPOINT 5, 6, 7] Bentuk block, jalankan PoW, lalu terima ke rantai.
+def perintah_mine(arg):
+    kode, hasil = panggil_node(arg[0], "mine", {})
+    if kode != 201:
+        print(f"Gagal menambang: {hasil.get('error')}")
+        return
+    block = hasil["block"]
+    print(
+        f"{hasil['pesan']}: Block {block['index']} "
+        f"(nonce {block['nonce']}, hash {block['hash'][:20]}...)"
+    )
 
-    elif perintah == "tally":
-        _, hasil = panggil(f"http://{alamat}/tally")
-        print(f"Total Suara Masuk: {hasil['total_suara']}")
-        print("Hasil Rekapitulasi Suara:")
-        for k, v in hasil["rekap_suara"].items():
-            print(f"  - {k}: {v} suara")
 
-    # [CHECKPOINT 9] Manipulasi data block lama (khusus demo)
-    elif perintah == "tamper":
-        kode, hasil = panggil(f"http://{alamat}/tamper", {"index": int(arg[1])})
-        print(hasil.get("pesan") or hasil.get("error"))
+def perintah_chain(arg):
+    alamat = arg[0]
+    _, hasil = panggil_node(alamat, "chain")
+    print(f"Panjang rantai di {alamat}: {hasil['panjang']} block")
+    ringkas(hasil["chain"])
 
-    # [CHECKPOINT 10] Menghubungkan node (syarat broadcast antar-node)
-    elif perintah == "add_peer":
-        kode, hasil = panggil(f"http://{alamat}/peers", {"peer": arg[1]})
-        print(hasil.get("pesan") or hasil.get("error"))
 
-    # [CHECKPOINT 10] Sinkronisasi: node yang tertinggal mengambil rantai terpanjang
-    elif perintah == "resolve":
-        _, hasil = panggil(f"http://{alamat}/resolve")
-        if hasil["rantai_diganti"]:
-            print(f"Rantai diganti. Panjang sekarang: {hasil['panjang']} block")
-        else:
-            print(f"Rantai tidak berubah. Panjang: {hasil['panjang']} block")
+# [CHECKPOINT 8-9] Rantai normal valid; manipulasi menampilkan block pertama yang rusak.
+def perintah_validate(arg):
+    _, hasil = panggil_node(arg[0], "validate")
+    if hasil["valid"]:
+        print(f"Rantai VALID untuk seluruh {hasil['panjang']} block")
+        return
+    print(f"Rantai TIDAK VALID. Block pertama yang rusak: index {hasil['index_rusak']}")
+    print(f"Alasan: {hasil['alasan']}")
 
-    # [CHECKPOINT 11] Block tanpa proof of work valid -> harus ditolak node
-    elif perintah == "palsu":
-        _, data = panggil(f"http://{alamat}/chain")
-        terakhir = Block.from_dict(data["chain"][-1])
-        target = "0" * data["difficulty"]
 
-        # Block ini rapi dan transaksinya bertanda tangan sah; satu-satunya yang salah: tidak ada PoW.
-        tx = Dompet("F55125999").buat_transaksi("Paslon 1")
-        block = Block(terakhir.index + 1, [tx], terakhir.hash)
-        block.nonce = 1
+def perintah_tally(arg):
+    _, hasil = panggil_node(arg[0], "tally")
+    print(f"Total Suara Masuk: {hasil['total_suara']}")
+    print("Hasil Rekapitulasi Suara:")
+    for kandidat, jumlah in hasil["rekap_suara"].items():
+        print(f"  - {kandidat}: {jumlah} suara")
+
+
+def tampilkan_pesan_node(alamat, endpoint, data):
+    _, hasil = panggil_node(alamat, endpoint, data)
+    print(hasil.get("pesan") or hasil.get("error"))
+
+
+# [CHECKPOINT 9] Manipulasi data block lama (khusus demo)
+def perintah_tamper(arg):
+    tampilkan_pesan_node(arg[0], "tamper", {"index": int(arg[1])})
+
+
+# [CHECKPOINT 10] Menghubungkan node (syarat broadcast antar-node)
+def perintah_add_peer(arg):
+    tampilkan_pesan_node(arg[0], "peers", {"peer": arg[1]})
+
+
+# [CHECKPOINT 10] Node tertinggal mengambil rantai valid yang terpanjang.
+def perintah_resolve(arg):
+    _, hasil = panggil_node(arg[0], "resolve")
+    status = "diganti. Panjang sekarang" if hasil["rantai_diganti"] else "tidak berubah. Panjang"
+    print(f"Rantai {status}: {hasil['panjang']} block")
+
+
+# [CHECKPOINT 11] Block tanpa proof of work valid -> harus ditolak node
+def perintah_palsu(arg):
+    alamat = arg[0]
+    _, data = panggil_node(alamat, "chain")
+    terakhir = Block.from_dict(data["chain"][-1])
+    target = "0" * data["difficulty"]
+
+    tx = Dompet("F55125999").buat_transaksi("Paslon 1")
+    block = Block(terakhir.index + 1, [tx], terakhir.hash, nonce=1)
+    while block.hash.startswith(target):
+        block.nonce += 1
         block.hash = block.hitung_hash()
-        while block.hash.startswith(target):
-            block.nonce += 1
-            block.hash = block.hitung_hash()
 
-        kode, hasil = panggil(f"http://{alamat}/block", block.to_dict())
-        if kode == 200:
-            print("Block palsu DITERIMA -- validasi node bermasalah.")
-        else:
-            print(f"Block palsu DITOLAK oleh node. Status HTTP: {kode}")
-            print(f"Alasan: {hasil.get('error')}")
+    kode, hasil = panggil_node(alamat, "block", block.to_dict())
+    if kode == 200:
+        print("Block palsu DITERIMA -- validasi node bermasalah.")
+        return
+    print(f"Block palsu DITOLAK oleh node. Status HTTP: {kode}")
+    print(f"Alasan: {hasil.get('error')}")
 
-    else:
+
+PERINTAH = {
+    "identitas": perintah_identitas,
+    "vote": perintah_vote,
+    "vote_ubah": perintah_vote_ubah,
+    "pool": perintah_pool,
+    "mine": perintah_mine,
+    "chain": perintah_chain,
+    "validate": perintah_validate,
+    "tally": perintah_tally,
+    "tamper": perintah_tamper,
+    "add_peer": perintah_add_peer,
+    "resolve": perintah_resolve,
+    "palsu": perintah_palsu,
+}
+
+
+def main():
+    if len(sys.argv) < 3 or sys.argv[1] not in PERINTAH:
         print(BANTUAN)
+        return
+    PERINTAH[sys.argv[1]](sys.argv[2:])
 
 
 if __name__ == "__main__":

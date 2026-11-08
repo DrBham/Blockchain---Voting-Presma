@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+
+# Private key pemilih harus tetap tersimpan lokal.
+dompet_*.pem
+
+# Laporan dikumpulkan melalui LMS, bukan repository kode.
+LAPORAN PROJECT BASED KELOMPOK 4.pdf
