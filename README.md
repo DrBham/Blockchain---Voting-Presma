@@ -4,6 +4,16 @@ Proyek **Kelompok 4, Teknik Informatika Universitas Tadulako (2026)** ini merupa
 
 > **Status:** prototipe untuk pembelajaran dan pengujian. Sistem **belum siap digunakan untuk pemilihan resmi** dan belum menjamin kerahasiaan pilihan suara atau kepemilikan NIM yang terverifikasi melalui sistem akademik.
 
+## Panduan membaca
+
+- Baru mencoba: ikuti [instalasi](#5-instalasi-dan-persiapan), lalu demo satu node di bagian tersebut.
+- Menguji distribusi blockchain: lanjutkan ke [jaringan tiga node](#6-menjalankan-jaringan-tiga-node).
+- Mencari perintah: buka [penggunaan client CLI](#7-penggunaan-client-cli) atau [endpoint HTTP](#9-daftar-endpoint-http).
+- Menyiapkan demonstrasi: gunakan [skenario pengujian](#8-pengujian-sesuai-checkpoint-laporan).
+- Mengalami kendala: lihat [pemecahan masalah](#13-pemecahan-masalah).
+
+**Hal yang perlu diketahui sebelum mencoba:** aplikasi menggunakan terminal, belum menyediakan antarmuka web. Suara masuk ke antrean (*pool*) sebelum ditambang dan baru masuk rekap setelah tercatat dalam blok. Blockchain dan pool disimpan di memori, sehingga data node hilang ketika proses berhenti; file dompet tetap tersimpan di komputer client.
+
 ## 1. Tujuan dan ruang lingkup
 
 Sesuai laporan proyek, sistem bertujuan mendemonstrasikan:
@@ -15,7 +25,19 @@ Sesuai laporan proyek, sistem bertujuan mendemonstrasikan:
 - penyebaran transaksi dan blok antarnode, serta pemulihan ketertinggalan rantai dengan *longest-chain rule*;
 - deteksi perubahan data dan penolakan blok tidak valid.
 
-**Aktor:** pemilih (mahasiswa UNTAD yang memenuhi aturan NIM/angkatan pada prototipe), kandidat (`Paslon 1` atau `Paslon 2` dalam skenario uji), dan node jaringan yang menyimpan serta memvalidasi blockchain. Aturan contoh dalam laporan mengacu pada angkatan 2023–2025/semester 3–7; pemeriksaan format/angkatan **bukan** autentikasi identitas mahasiswa terhadap database resmi.
+**Aktor:** pemilih (mahasiswa UNTAD yang memenuhi aturan NIM/angkatan pada prototipe), kandidat (`Paslon 1` atau `Paslon 2`), dan node jaringan yang menyimpan serta memvalidasi blockchain.
+
+Aturan yang saat ini ditetapkan dalam `node.py`:
+
+| Aturan | Nilai |
+| --- | --- |
+| Kandidat | `Paslon 1` dan `Paslon 2`; penulisan harus sesuai |
+| Angkatan | `23`, `24`, dan `25` (2023–2025) |
+| Kode fakultas | `A`, `B`, `C`, `D`, `E`, `F`, `G`, `K`, `L`, `N`, `P` |
+| Contoh NIM | `F55125001`: kode fakultas `F`, kode prodi `551`, tahun `25`, nomor urut `001` |
+| Hak pilih | Satu NIM tidak boleh muncul kembali dalam pool atau rantai yang diketahui node |
+
+Angkatan yang diterima merupakan konfigurasi tetap dan **tidak bergeser otomatis mengikuti tahun berjalan**. Validator memeriksa panjang minimum, kode fakultas, dan potongan tahun; belum memeriksa seluruh pola NIM secara ketat atau mencocokkannya dengan database mahasiswa. Pembuatan dompet juga tidak membuktikan kepemilikan NIM.
 
 ## 2. Teknologi dan konsep
 
@@ -95,7 +117,7 @@ Pemeriksaan yang dijelaskan dalam laporan meliputi: urutan `index`, kecocokan `p
 
 ## 5. Instalasi dan persiapan
 
-Pastikan Python 3.8 atau lebih baru telah tersedia.
+Siapkan Python dan `pip`. Python 3.12 disarankan agar sama dengan versi pada Dockerfile. Docker beserta Docker Compose hanya diperlukan jika memilih cara menjalankan node melalui container.
 
 ```bash
 git clone https://github.com/DrBham/Blockchain---Voting-Presma.git
@@ -110,6 +132,34 @@ python client.py
 ```
 
 > File `dompet_<NIM>.pem` berisi **private key tanpa enkripsi** dan dibuat di komputer client. Jangan unggah, *commit*, atau bagikan berkas dompet. Untuk penggunaan di luar demonstrasi diperlukan proteksi kunci dan autentikasi identitas yang lebih kuat.
+
+### Demo cepat dengan satu node
+
+Jalankan dari folder repository. Pada **terminal pertama**, nyalakan server dan biarkan tetap berjalan:
+
+```bash
+python node.py 5001
+```
+
+Pada **terminal kedua**, jalankan perintah berikut secara berurutan:
+
+```bash
+python client.py identitas F55125001
+python client.py vote localhost:5001 "Paslon 1" F55125001
+python client.py pool localhost:5001
+python client.py mine localhost:5001
+python client.py validate localhost:5001
+python client.py tally localhost:5001
+```
+
+Pada node yang baru dijalankan, hasil yang diharapkan:
+
+1. Dompet dibuat atau dimuat dari `dompet_F55125001.pem`.
+2. Transaksi diterima dan pool berisi satu suara.
+3. Penambangan membuat blok indeks `1`; panjang rantai menjadi dua blok, termasuk genesis.
+4. Rantai dinyatakan valid dan rekap menunjukkan satu suara untuk `Paslon 1`.
+
+`identitas` bersifat opsional sebelum `vote`, karena `vote` juga membuat atau memuat dompet. Gunakan `Ctrl+C` pada terminal server untuk menghentikan node. Untuk mengulangi demo dari rantai kosong, jalankan ulang node; tidak perlu menghapus dompet.
 
 ## 6. Menjalankan jaringan tiga node
 
@@ -141,6 +191,14 @@ python node.py <port> [peer1,peer2,...] [difficulty]
 
 Default `difficulty` adalah `4`. Log transaksi, penambangan, validasi, broadcast, dan sinkronisasi ditampilkan pada terminal node.
 
+Gunakan difficulty yang sama pada semua node. Untuk demonstrasi yang lebih cepat, misalnya gunakan `2` sebagai argumen terakhir:
+
+```bash
+python node.py 5001 localhost:5002,localhost:5003 2
+```
+
+Jalankan node 2 dan 3 dengan difficulty `2` juga. Hindari menambang secara bersamaan pada beberapa node saat mengikuti demo dasar agar tidak membentuk cabang rantai dengan panjang sama.
+
 ### Alternatif menggunakan Docker Compose
 
 ```bash
@@ -149,13 +207,32 @@ docker compose up --build
 
 Berkas `docker-compose.yml` menyediakan tiga node: `localhost:5001`, `localhost:5002`, dan `localhost:5003` dari komputer host. Di dalam container, masing-masing server berjalan pada port `5000`.
 
+Jalankan `client.py` dari komputer host pada terminal lain; Python dan paket `cryptography` tetap diperlukan di host. Image Docker hanya menyalin `node.py`. Jangan menjalankan node Python lokal pada port yang sama saat Compose aktif.
+
+Untuk menjalankan container di latar belakang, memeriksa log, dan menghentikan jaringan:
+
+```bash
+docker compose up --build -d
+docker compose logs -f
+```
+
+Tekan `Ctrl+C` untuk keluar dari tampilan log. Setelah selesai menggunakan jaringan:
+
+```bash
+docker compose down
+```
+
+Konfigurasi ini belum menyimpan blockchain ke disk atau volume. Restart proses/container mengembalikan node ke genesis; node dapat mengambil kembali rantai dari peer yang masih memiliki data melalui `resolve`.
+
 ## 7. Penggunaan client CLI
 
-Format umum:
+Format perintah yang mengakses node:
 
 ```text
 python client.py <perintah> <alamat-node> [argumen...]
 ```
+
+Gunakan alamat berbentuk `host:port`, **tanpa** awalan `http://` karena client menambahkannya otomatis. Khusus identitas lokal, formatnya `python client.py identitas <NIM>` dan tidak memerlukan node aktif.
 
 Contoh berikut menggunakan NIM **data simulasi** dan jaringan lokal. Jalankan dari terminal baru.
 
@@ -208,6 +285,8 @@ python client.py validate localhost:5001
 python client.py tally localhost:5001
 ```
 
+Rekap hanya menghitung suara yang sudah berada dalam blockchain; suara di pool belum dihitung. Jalankan `validate` sebelum membaca hasil, terutama setelah pengujian manipulasi, karena `tally` tidak memvalidasi rantai secara otomatis.
+
 **8. Sinkronisasi node**
 
 ```bash
@@ -216,6 +295,14 @@ python client.py chain localhost:5002
 ```
 
 Node memeriksa rantai milik *peer* dan memilih rantai valid yang lebih panjang jika tersedia.
+
+**9. Menambah peer pada node yang sudah berjalan**
+
+```bash
+python client.py add_peer localhost:5001 localhost:5002
+```
+
+Perintah ini mencoba mendaftarkan koneksi dua arah. Pendaftaran balik pada kode saat ini menggunakan `127.0.0.1:<port-node>`, sehingga cocok untuk demo proses lokal. Untuk dua laptop atau container, tetapkan daftar peer yang dapat dijangkau melalui argumen saat menjalankan node atau konfigurasi Compose.
 
 ## 8. Pengujian sesuai checkpoint laporan
 
@@ -282,6 +369,10 @@ python client.py chain localhost:5002
 ```
 
 Node mengambil rantai valid terpanjang yang tersedia dari *peer*. Pastikan alamat peer dapat diakses.
+
+Agar perubahan mudah diamati, hentikan node 2, kirim suara dengan NIM baru dan tambang di node 1, lalu jalankan kembali node 2 dengan daftar peer semula. Node 2 mulai dari genesis; jalankan `resolve` pada node 2 dan bandingkan `chain` serta `tally` dengan node 1.
+
+`resolve` dipicu secara manual dan hanya mengganti rantai dengan rantai valid yang **lebih panjang**. Rantai dengan panjang sama tidak menggantikan rantai lokal, termasuk ketika rantai lokal telah dimanipulasi. Pool yang tertinggal juga tidak diunduh dari peer melalui perintah ini.
 
 ## 9. Daftar endpoint HTTP
 
@@ -353,3 +444,21 @@ Rencana pengembangan pada Sub-CPMK 6 mencakup pengujian multi-node lanjutan, val
 **Dosen pengampu:** Rizka Ardiansyah, S.Kom., M.Kom.  
 **Program studi:** S1 Teknik Informatika, Fakultas Teknik, Universitas Tadulako.  
 **Tahun:** 2026.
+
+## 13. Pemecahan masalah
+
+| Gejala | Penyebab atau langkah penanganan |
+| --- | --- |
+| `No module named 'cryptography'` | Jalankan `python -m pip install cryptography` dengan interpreter Python yang dipakai menjalankan aplikasi. |
+| Client tidak dapat terhubung | Pastikan node aktif, alamat memakai `host:port`, dan port sesuai. Untuk lintas laptop, gunakan IP LAN serta periksa firewall. |
+| Port sudah digunakan | Hentikan proses node sebelumnya atau pilih port lain. Node lokal dan Docker tidak dapat memakai port host yang sama bersamaan. |
+| NIM atau kandidat ditolak | Cocokkan dengan aturan pada bagian 1. Gunakan tanda kutip pada nama kandidat, misalnya `"Paslon 1"`. |
+| NIM sudah menggunakan hak pilih | Gunakan NIM simulasi lain yang belum ada dalam pool/rantai. Membuat ulang dompet tidak menghapus riwayat suara. |
+| `pool kosong` saat menambang | Kirim transaksi valid terlebih dahulu. Periksa apakah suara sudah masuk blok dari peer. |
+| Rekap masih nol setelah `vote` | Jalankan `mine`; suara di pool belum termasuk hasil rekap. |
+| Broadcast gagal | Pastikan semua peer sudah aktif dan alamatnya dapat dijangkau dari node pengirim. Setelah node tertinggal aktif kembali, jalankan `resolve` untuk mengambil blok. |
+| `resolve` tidak mengubah rantai | Periksa apakah peer memiliki rantai valid yang benar-benar lebih panjang dan difficulty yang sama. Panjang sama tidak memicu penggantian. |
+| Rantai tidak valid setelah `tamper` | Ini hasil yang diharapkan dari uji manipulasi. Untuk demo baru yang bersih, hentikan lalu jalankan ulang seluruh node. |
+| Suara hilang setelah restart | Data blockchain dan pool hanya disimpan di memori. Pemulihan memerlukan peer yang masih memiliki rantai valid. |
+
+Untuk pemeriksaan langsung tanpa perintah client, buka `http://localhost:5001/chain`, `http://localhost:5001/pool`, atau `http://localhost:5001/peers` pada browser saat node berjalan. Endpoint tersebut mengembalikan JSON, bukan halaman aplikasi.
