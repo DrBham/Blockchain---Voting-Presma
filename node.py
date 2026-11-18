@@ -1,36 +1,4 @@
-# node.py -- Node Voting Blockchain Terdistribusi Universitas Tadulako
-#
-# Gabungan dari:
-#   - blockchain_voting.py : transaksi bertanda tangan (RSA-PSS), transaction pool, validasi chain
-#   - node.py lama         : aturan NIM UNTAD, jaringan antar-node, longest-chain rule
-#
-# Susunan class:
-#   Transaksi   -> satu suara, ditandatangani voter
-#   Block       -> kumpulan transaksi + previous_hash + nonce + hash
-#   Blockchain  -> rantai block, transaction pool, validasi, proof of work
-#   Node        -> Blockchain + daftar peer + komunikasi ke node lain
-#
-# Cara menjalankan:
-#   python node.py <port> [peer1,peer2,...] [difficulty]
-#   contoh: python node.py 5001 127.0.0.1:5002,127.0.0.1:5003 4
-
-# ============================================================
-# PETA CHECKPOINT (Bagian D) -> LOKASI KODE
-# Cari tulisan "[CHECKPOINT n]" di file untuk melihat bagian kodenya.
-#
-#  No  Peristiwa                         Kode          Dimana tercetak
-#  1   Pembuatan identitas pengirim      client.py     console client
-#  2   Transaksi dibuat & ditandatangani client.py     console client + console node
-#  3   Verifikasi signature (+ tolak)    node.py       console node + console client
-#  4   Status pool                       node.py       console node (+ perintah pool)
-#  5   Block candidate dari pool         node.py       console node
-#  6   Proof of work berjalan            node.py       console node
-#  7   Block diterima rantai             node.py       console node
-#  8   Validasi rantai normal            node.py       perintah validate
-#  9   Manipulasi data block lama        node.py       perintah tamper + validate
-#  10  Broadcast & sinkronisasi          node.py       console node asal, tujuan, resolve
-#  11  Penolakan block tidak sah         node.py       console node + perintah palsu
-# ============================================================
+# Node voting blockchain terdistribusi Universitas Tadulako.
 
 import hashlib
 import json
@@ -44,9 +12,8 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
-PORT = 0  # diisi saat node dijalankan, dipakai untuk awalan log
+PORT = 0
 
-# --- Aturan & Konfigurasi Voting UNTAD ---
 PASLON_VALID = ("Paslon 1", "Paslon 2")
 ANGKATAN_VALID = {"23", "24", "25"}  # Angkatan 2023 (Sem 7), 2024 (Sem 5), 2025 (Sem 3)
 FAKULTAS_UNTAD = {"A", "B", "C", "D", "E", "F", "G", "K", "L", "N", "P"}
@@ -92,19 +59,15 @@ def _ke_json_bytes(data):
     return json.dumps(data, sort_keys=True).encode("utf-8")
 
 
-# ============================================================
-# 1. CLASS TRANSAKSI  (satu suara)
 # [FITUR WAJIB: Transaksi bertanda tangan] ditandatangani private key pengirim,
 # diverifikasi node sebelum diterima.
-# ============================================================
-
 class Transaksi:
     def __init__(self, voter_id, kandidat, public_key, timestamp=None, signature=""):
-        self.voter_id = voter_id          # NIM
-        self.kandidat = kandidat          # "Paslon 1" / "Paslon 2"
-        self.public_key = public_key      # public key voter (teks PEM)
+        self.voter_id = voter_id
+        self.kandidat = kandidat
+        self.public_key = public_key
         self.timestamp = timestamp if timestamp is not None else time.time()
-        self.signature = signature        # tanda tangan dalam bentuk hex
+        self.signature = signature
 
     def pesan(self):
         """Isi yang ditandatangani. Kalau salah satu isinya diubah, signature jadi tidak cocok."""
@@ -160,16 +123,12 @@ def validasi_transaksi(tx):
     return True, "valid"
 
 
-# ============================================================
-# 2. CLASS BLOCK
-# ============================================================
-
 # [FITUR WAJIB: Struktur block] index, timestamp, daftar transaksi, previous hash, nonce, hash
 class Block:
     def __init__(self, index, transaksi, previous_hash, timestamp=None, nonce=0, hash_nilai=None):
         self.index = index
         self.timestamp = timestamp if timestamp is not None else time.time()
-        self.transaksi = transaksi          # list objek Transaksi
+        self.transaksi = transaksi
         self.previous_hash = previous_hash
         self.nonce = nonce
         self.hash = hash_nilai if hash_nilai is not None else self.hitung_hash()
@@ -267,16 +226,12 @@ def validasi_rantai(chain, difficulty):
     return True, None, "rantai valid"
 
 
-# ============================================================
-# 3. CLASS BLOCKCHAIN
-# ============================================================
-
 class Blockchain:
     def __init__(self, difficulty=4):
         self.difficulty = difficulty
         self.chain = [self.buat_genesis()]
-        self.pool = []                      # transaction pool (antrean suara pending)
-        self.lock = threading.RLock()       # agar request yang datang bersamaan tidak saling tabrak
+        self.pool = []
+        self.lock = threading.RLock()
 
     @staticmethod
     def buat_genesis():
@@ -293,8 +248,6 @@ class Blockchain:
         return voter_id in self.voters_di_rantai() or any(
             tx.voter_id == voter_id for tx in self.pool
         )
-
-    # --- Transaksi & pool ---
 
     def tambah_transaksi(self, tx):
         """Mengembalikan (ok, pesan, baru). baru=False kalau transaksi ini sudah ada di pool."""
@@ -324,8 +277,6 @@ class Blockchain:
             self.pool.append(tx)
             log(f"Transaksi masuk pool. Transaksi pending sekarang: {len(self.pool)}")
             return True, "transaksi diterima ke pool", True
-
-    # --- Membentuk & menambang block ---
 
     def tambang_pool(self):
         """Bentuk block dari isi pool, jalankan PoW, tambahkan ke rantai. Mengembalikan block atau None."""
@@ -361,8 +312,6 @@ class Blockchain:
             log(f"Pool sekarang    : {len(self.pool)} transaksi (kosong)")
             return block
 
-    # --- Menerima block dari node lain ---
-
     def terima_block(self, block):
         with self.lock:
             ok, alasan = validasi_block(block, self.terakhir(), self.difficulty, self.voters_di_rantai())
@@ -378,8 +327,6 @@ class Blockchain:
             log(f"block {block.index} DITERIMA dari peer | hash {block.hash[:20]}...")
             log(f"Panjang rantai: {len(self.chain)} | pool: {len(self.pool)} transaksi")
             return True, "block diterima"
-
-    # --- Integritas ---
 
     # [CHECKPOINT 8 dan 9] Validasi rantai; hasilnya dicetak (valid, atau index block rusak + alasan)
     def periksa(self):
@@ -412,10 +359,6 @@ class Blockchain:
             log(f"DEMO MANIPULASI: block {index}, suara {tx.voter_id} diubah dari '{lama}' menjadi '{tx.kandidat}'")
             return True, f"suara di block {index} diubah dari '{lama}' menjadi '{tx.kandidat}'"
 
-
-# ============================================================
-# 4. CLASS NODE  (Blockchain + jaringan)
-# ============================================================
 
 def kirim_json(url, isi):
     permintaan = urllib.request.Request(
@@ -502,10 +445,6 @@ class Node:
         log(f"RESOLVE: rantai diganti dengan rantai terpanjang ({len(terpanjang)} block)")
         return True
 
-
-# ============================================================
-# 5. ANTARMUKA HTTP
-# ============================================================
 
 NODE = None
 

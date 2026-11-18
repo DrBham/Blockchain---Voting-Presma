@@ -1,15 +1,4 @@
-# client.py -- Alat bantu perintah voting UNTAD
-#
-# Private key voter dibuat dan disimpan LOKAL di file dompet_<NIM>.pem.
-# Yang dikirim ke node hanya transaksi yang sudah ditandatangani + public key.
-#
-# File ini mengimpor class dari node.py, jadi letakkan keduanya di folder yang sama.
-#
-# Bagian client dari peta checkpoint (peta lengkap ada di node.py):
-#  CP1  identitas -> Dompet.tampilkan_identitas   CP2  tanda tangan -> Dompet.buat_transaksi
-#  CP3  perintah vote / vote_ubah   CP4  perintah pool   CP5-7 perintah mine
-#  CP8  perintah validate   CP9  perintah tamper + validate
-#  CP10 perintah add_peer / resolve   CP11 perintah palsu
+# Client perintah voting UNTAD. Private key disimpan lokal dan tidak dikirim ke node.
 
 import json
 import sys
@@ -24,10 +13,6 @@ from node import Block, Transaksi, alamat_dari_pem
 
 BATAS_WAKTU_NODE = 120
 
-
-# ============================================================
-# CLASS DOMPET  (identitas + kunci voter)
-# ============================================================
 
 class Dompet:
     def __init__(self, nim):
@@ -79,10 +64,6 @@ class Dompet:
         return tx
 
 
-# ============================================================
-# KOMUNIKASI KE NODE
-# ============================================================
-
 def panggil(url, data=None):
     """Mengembalikan (kode_http, isi_json). Tidak melempar error untuk status 4xx/5xx."""
     if data is None:
@@ -126,10 +107,6 @@ def kirim_transaksi(alamat, tx):
     else:
         print(f"Transaksi DITOLAK node (HTTP {kode}): {hasil.get('error')}")
 
-
-# ============================================================
-# PERINTAH
-# ============================================================
 
 BANTUAN = """Perintah:
   identitas <NIM>                               buat/lihat identitas voter
