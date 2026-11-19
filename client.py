@@ -63,7 +63,6 @@ class Dompet:
         tx.tanda_tangani(self.private_key)
         return tx
 
-
 def panggil(url, data=None):
     """Mengembalikan (kode_http, isi_json). Tidak melempar error untuk status 4xx/5xx."""
     if data is None:
