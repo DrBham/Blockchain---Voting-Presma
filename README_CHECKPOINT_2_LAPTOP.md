@@ -2,13 +2,13 @@
 
 Panduan ini menjalankan seluruh checkpoint `node.py` dan `client.py` melalui dua laptop dalam jaringan yang sama.
 
-## Topologi contoh
+## Topologi jaringan yang digunakan
 
 - Laptop A: `192.168.137.1`, node port `5001`
-- Laptop B: `192.168.137.2`, node port `5002`
+- Laptop B: `192.168.137.253`, node port `5002`
 - Difficulty: `4`, sehingga hash Proof of Work harus diawali `0000`
 
-Ganti alamat IP contoh dengan IPv4 masing-masing laptop.
+Semua perintah di bawah memakai alamat IPv4 tersebut, bukan `localhost`.
 
 ## 1. Persiapan kedua laptop
 
@@ -30,7 +30,7 @@ Pastikan kedua laptop terhubung ke Wi-Fi atau hotspot yang sama. Uji koneksi dar
 
 ```powershell
 # Jalankan dari Laptop A
-ping 192.168.137.2
+ping 192.168.137.253
 
 # Jalankan dari Laptop B
 ping 192.168.137.1
@@ -51,7 +51,7 @@ New-NetFirewallRule -DisplayName "Blockchain Node 5002" -Direction Inbound -Prot
 Buka terminal pertama pada Laptop A:
 
 ```powershell
-python node.py 5001 192.168.137.2:5002 4
+python node.py 5001 192.168.137.253:5002 4
 ```
 
 Buka terminal pertama pada Laptop B:
@@ -66,7 +66,7 @@ Setelah node hidup, uji port:
 
 ```powershell
 # Dari Laptop A
-Test-NetConnection 192.168.137.2 -Port 5002
+Test-NetConnection 192.168.137.253 -Port 5002
 
 # Dari Laptop B
 Test-NetConnection 192.168.137.1 -Port 5001
@@ -95,7 +95,7 @@ Hasil yang diperiksa:
 Kirim transaksi valid ke node Laptop A:
 
 ```powershell
-python client.py vote 127.0.0.1:5001 "Paslon 1" F55125001
+python client.py vote 192.168.137.1:5001 "Paslon 1" F55125001
 ```
 
 Hasil yang diperiksa:
@@ -107,7 +107,7 @@ Hasil yang diperiksa:
 Uji perubahan transaksi setelah ditandatangani menggunakan NIM baru:
 
 ```powershell
-python client.py vote_ubah 127.0.0.1:5001 "Paslon 1" "Paslon 2" F55125002
+python client.py vote_ubah 192.168.137.1:5001 "Paslon 1" "Paslon 2" F55125002
 ```
 
 Hasil yang diharapkan: transaksi ditolak karena `signature tidak cocok`.
@@ -117,8 +117,8 @@ Hasil yang diharapkan: transaksi ditolak karena `signature tidak cocok`.
 Periksa pool kedua node:
 
 ```powershell
-python client.py pool 127.0.0.1:5001
-python client.py pool 192.168.137.2:5002
+python client.py pool 192.168.137.1:5001
+python client.py pool 192.168.137.253:5002
 ```
 
 Transaksi valid `F55125001 -> Paslon 1` harus terlihat pada kedua node.
@@ -128,7 +128,7 @@ Transaksi valid `F55125001 -> Paslon 1` harus terlihat pada kedua node.
 Tambang pool pada Laptop A:
 
 ```powershell
-python client.py mine 127.0.0.1:5001
+python client.py mine 192.168.137.1:5001
 ```
 
 Periksa terminal node Laptop A. Terminal harus menampilkan:
@@ -142,8 +142,8 @@ Periksa terminal node Laptop A. Terminal harus menampilkan:
 Periksa rantai kedua node:
 
 ```powershell
-python client.py chain 127.0.0.1:5001
-python client.py chain 192.168.137.2:5002
+python client.py chain 192.168.137.1:5001
+python client.py chain 192.168.137.253:5002
 ```
 
 Block baru harus tampil pada kedua node. Terminal Laptop B juga harus mencatat penerimaan block dari peer.
@@ -151,8 +151,8 @@ Block baru harus tampil pada kedua node. Terminal Laptop B juga harus mencatat p
 ### Checkpoint 8 — Validasi rantai normal
 
 ```powershell
-python client.py validate 127.0.0.1:5001
-python client.py validate 192.168.137.2:5002
+python client.py validate 192.168.137.1:5001
+python client.py validate 192.168.137.253:5002
 ```
 
 Hasil yang diharapkan: `Rantai VALID` pada kedua node.
@@ -165,8 +165,8 @@ Broadcast transaksi dan block sudah terlihat pada Checkpoint 2–7. Gunakan lang
 2. Saat Laptop B mati, jalankan pada Laptop A:
 
 ```powershell
-python client.py vote 127.0.0.1:5001 "Paslon 2" F55125003
-python client.py mine 127.0.0.1:5001
+python client.py vote 192.168.137.1:5001 "Paslon 2" F55125003
+python client.py mine 192.168.137.1:5001
 ```
 
 3. Jalankan kembali node Laptop B:
@@ -178,9 +178,9 @@ python node.py 5002 192.168.137.1:5001 4
 4. Pada terminal kedua Laptop B, ambil rantai terpanjang dari Laptop A:
 
 ```powershell
-python client.py resolve 127.0.0.1:5002
-python client.py chain 127.0.0.1:5002
-python client.py validate 127.0.0.1:5002
+python client.py resolve 192.168.137.253:5002
+python client.py chain 192.168.137.253:5002
+python client.py validate 192.168.137.253:5002
 ```
 
 Hasil yang diharapkan: rantai Laptop B diganti dengan rantai valid dan lebih panjang milik Laptop A.
@@ -192,7 +192,7 @@ Hasil yang diharapkan: rantai Laptop B diganti dengan rantai valid dan lebih pan
 Jalankan terhadap node Laptop A yang masih memiliki rantai valid:
 
 ```powershell
-python client.py palsu 127.0.0.1:5001
+python client.py palsu 192.168.137.1:5001
 ```
 
 Hasil yang diharapkan:
@@ -206,8 +206,8 @@ Hasil yang diharapkan:
 Jalankan terakhir karena perintah ini sengaja merusak rantai pada Laptop B:
 
 ```powershell
-python client.py tamper 192.168.137.2:5002 1
-python client.py validate 192.168.137.2:5002
+python client.py tamper 192.168.137.253:5002 1
+python client.py validate 192.168.137.253:5002
 ```
 
 Hasil yang diharapkan:
@@ -222,13 +222,13 @@ Rantai Laptop A tetap valid karena manipulasi hanya dilakukan pada Laptop B.
 
 ```powershell
 # Daftar peer
-Invoke-RestMethod http://127.0.0.1:5001/peers
+Invoke-RestMethod http://192.168.137.1:5001/peers
 
 # Rekap suara Laptop A
-python client.py tally 127.0.0.1:5001
+python client.py tally 192.168.137.1:5001
 
 # Rekap suara Laptop B
-python client.py tally 192.168.137.2:5002
+python client.py tally 192.168.137.253:5002
 ```
 
 ## 5. Masalah umum
